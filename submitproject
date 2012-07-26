@@ -7,7 +7,8 @@ require 'tmpdir'
 
 #global variables:
 # $logfile
-# osccmd
+# $osccmd
+# $debug_project
 
 def log(message)
   unless $logfile
@@ -21,9 +22,10 @@ end
 # create a submit request
 def create_sr(package,from,to)
   puts "Creating submit request for package #{package} from #{from} to #{to}"
-# FIXME remove following 2 lines
-  to = "home:jsrain:tmp"
-  puts "Creating submit request for package #{package} from #{from} to #{to}"
+  if $debug_project
+    to = $debug_project
+    puts "Creating submit request for package #{package} from #{from} to #{to}"
+  end
   log "Creating submit request for package #{package} from #{from} to #{to}"
   if system("#{$osccmd} sr #{from} #{package} #{to}")
     request = `#{$osccmd} request list #{to} #{package} |grep State:new |head -n 1 |cut -d\\  -f2`
@@ -58,6 +60,7 @@ def ask_submit(package, from, to, question)
   ret
 end
 
+# print diff of a specific file; return true if files differ
 def file_diff(package, from, to, file)
   ret = true;
   Dir.mktmpdir {|tmpdir| 
@@ -66,7 +69,7 @@ def file_diff(package, from, to, file)
       puts "=== Cannot check out file #{file} from package #{package}"
       ret = true
     else
-      ret = files_found && system("cd #{tmpdir} && diff  #{file} #{file}.new")
+      ret = ! system("cd #{tmpdir} && diff  #{file} #{file}.new")
     end
   }
   ret
@@ -105,10 +108,11 @@ end
 
 def submit_project(project, options)
   $logfile = options.logfile
+  $debug_project = options.debug_project
   $osccmd = options.api_url ? "osc -A #{options.api_url} " : "osc "
   prjconf = options.prjconf ? options.prjconf : "~/.oscsubmit"
   projects = YAML.load_file(File.expand_path(prjconf, __FILE__))
-  puts "Submitting #{$osccmd}"
+  # filter out generated packages
   pkglist = `#{$osccmd} ls #{project} |grep -v _product:`
   pkglist.split.each do |package|
     puts "=== Analyzing package #{package}..."
@@ -130,13 +134,21 @@ def submit_project(project, options)
           puts "Package #{package} not changed, skipping..."
         end
       else
-        unless changelog_diff(package, project, target_project)
-          puts `#{$osccmd} rdiff #{target_project} #{package} #{project}`
+        changed = false
+        if changelog_diff(package, project, target_project)
+          changed = true
+        else
+          diff = `#{$osccmd} rdiff #{target_project} #{package} #{project}`
+          changed = diff != ""
         end
-        submitted = ask_submit(package, project, target_project, "=== Submit package #{package} to #{target_project}? (y/n/c)")
-        unless submitted || target_project == projects[project][0][0]
-          target_project = projects[project][0][0];
-          ask_submit(package, project, target_project, "=== Submit package #{package} to #{target_project}? (y/n/c)")
+        if changed
+          submitted = ask_submit(package, project, target_project, "=== Submit package #{package} to #{target_project}? (y/n/c)")
+          unless submitted || target_project == projects[project][0][0]
+            target_project = projects[project][0][0];
+            ask_submit(package, project, target_project, "=== Submit package #{package} to #{target_project}? (y/n/c)")
+          end
+        else
+           puts "Package #{package} not changed, skipping..."
         end
       end
     else
@@ -165,6 +177,10 @@ def go
             "Store information to notify the AutoBuild team") do |logfile|
       create_opts.logfile = logfile
     end
+    opts.on("-d", "--debug_project PROJECT", String,
+            "Create all submit request to different project; for debugging purposes") do |debug_project|
+      create_opts.debug_project = debug_project
+    end
 
     opts.on_tail("-h", "--help", "Show this help and exit") do |v|
       options[:help] = v
@@ -179,7 +195,11 @@ def go
     $stderr.puts help
     exit 1
   elsif ARGV.one?
-    puts create_opts.inspect
+    if create_opts.logfile
+      open(create_opts.logfile, 'w') { |f|
+        f.puts "Submitting project #{ARGV[0]}"
+      }
+    end
     submit_project(ARGV[0], create_opts)
   else
     raise(OptionParser::ParseError,
