@@ -1,0 +1,188 @@
+#!/usr/bin/env ruby
+
+require 'optparse'
+require 'ostruct'
+require 'yaml'
+require 'tmpdir'
+
+def log(message)
+  unless $logfile
+    return
+  end
+  open($logfile, 'a') { |f|
+    f.puts message
+  }
+end
+
+# create a submit request
+def create_sr(package,from,to)
+  puts "Creating submit request for package #{package} from #{from} to #{to}"
+# FIXME remove following 2 lines
+  to = "home:jsrain:tmp"
+  puts "Creating submit request for package #{package} from #{from} to #{to}"
+  log "Creating submit request for package #{package} from #{from} to #{to}"
+  if system("#{$osccmd} sr #{from} #{package} #{to}")
+    request = `#{$osccmd} request list #{to} #{package} |grep State:new |head -n 1 |cut -d\\  -f2`
+    log "Creted request id #{request}"
+  end
+end
+ 
+#ask a Yes/No question
+def ask(question)
+  puts question
+  begin
+    system "stty raw -echo"
+    out = STDIN.getc.chr.downcase
+  ensure
+    system "stty -raw echo"
+  end
+  out == 'y'
+end
+
+#ask whether to submit a package or not, submit if requested
+def ask_submit(package, from, to, question)
+  ret = false;
+  if ask question
+    create_sr(package, from, to)
+    ret = true
+  else
+    puts "Skipping package #{package}"
+  end
+  ret
+end
+
+def file_diff(package, from, to, file)
+  ret = true;
+  Dir.mktmpdir {|tmpdir| 
+    files_found = system("cd #{tmpdir} && #{$osccmd} co #{from} #{package} #{file} && mv #{file} #{file}.new && #{$osccmd} co #{to} #{package} #{file} >/dev/null 2>&1")
+    unless files_found
+      puts "=== Cannot check out file #{file} from package #{package}"
+      ret = true
+    else
+      ret = files_found && system("cd #{tmpdir} && diff  #{file} #{file}.new")
+    end
+  }
+  ret
+end
+
+def changelog_diff(package, from, to)
+  if file_diff(package, from, to, "#{package}.changes")
+    puts "=== Changelog has not changed..."
+    return false
+  end
+  return true
+end
+
+def find_package_in_prjlist(package, prjlist)
+  found=nil
+  prjlist.each do |project|
+    if system "#{$osccmd} ls #{project} #{package} >/dev/null 2>/dev/null"
+      found=project;
+      break
+    end
+  end
+  found;
+end
+
+def find_package(package,projects)
+  found=nil
+  projects.each do |prjlist|
+    project_found = find_package_in_prjlist(package, prjlist)
+    if project_found != nil
+      found=[prjlist[0], project_found]
+      break
+    end
+  end
+  found;
+end
+
+def submit_project(project, options)
+  $logfile = options.logfile
+  $osccmd = options.api_url ? "osc -A #{options.api_url} " : "osc "
+  prjconf = options.prjconf ? options.prjconf : "~/.oscsubmit"
+  projects = YAML.load_file(File.expand_path(prjconf, __FILE__))
+  puts "Submitting #{$osccmd}"
+  pkglist = `#{$osccmd} ls #{project} |grep -v _product:`
+  pkglist.split.each do |package|
+    puts "=== Analyzing package #{package}..."
+    (target_project, project_found) = find_package(package,projects[project])
+    if target_project == nil
+      target_project = projects[project][0][0];
+    end
+    package_found = project_found != nil
+    if package_found
+      puts "=== Package #{package} found in project #{target_project}"
+      if (package == "_product")
+	changed = false;
+        `#{$osccmd} ls #{project} #{package} |grep '\\(product\\|group\\|spec\\)$'`.split.each do |file|
+          changed = file_diff(package, project, target_project, file) || changed;
+        end
+        if (changed)
+          ask_submit(package, project, target_project, "=== Submit package #{package} to #{target_project}? (y/n)")
+        else
+          puts "Package #{package} not changed, skipping..."
+        end
+      else
+        unless changelog_diff(package, project, target_project)
+          puts `#{$osccmd} rdiff #{target_project} #{package} #{project}`
+        end
+        submitted = ask_submit(package, project, target_project, "=== Submit package #{package} to #{target_project}? (y/n)")
+        unless submitted || target_project == projects[project][0][0]
+          target_project = projects[project][0][0];
+          ask_submit(package, project, target_project, "=== Submit package #{package} to #{target_project}? (y/n)")
+        end
+      end
+    else
+      ask_submit(package, project, target_project, "=== Pakcage #{package} is new. Submit to #{target_project}? (y/n)")
+    end
+  end
+end
+
+def go
+  options = {}
+  help = ''
+  create_opts = OpenStruct.new
+  parser = OptionParser.new do |opts|
+    opts.banner = ("Usage: submitproject PROJECT_ID [options]")
+    opts.separator ""
+
+    opts.on("-A", "--apiurl API_URL", String,
+            "URL of the Open Build Service API") do |api_url|
+      create_opts.api_url = api_url
+    end
+    opts.on("-p", "--prjconf PROJECT_CONFIG", String,
+            "Configuration of sumit target projects") do |prjconf|
+      create_opts.prjconf = prjconf
+    end
+    opts.on("-l", "--log LOGDILE", String,
+            "Store information to notify the AutoBuild team") do |logfile|
+      create_opts.logfile = logfile
+    end
+
+    opts.on_tail("-h", "--help", "Show this help and exit") do |v|
+      options[:help] = v
+      puts opts.to_s
+      exit 0
+    end
+
+    help = opts.to_s
+  end.parse!
+
+  if ARGV.empty?
+    $stderr.puts help
+    exit 1
+  elsif ARGV.one?
+    puts create_opts.inspect
+    submit_project(ARGV[0], create_opts)
+  else
+    raise(OptionParser::ParseError,
+          "Got too many arguments. See --help for usage.")
+  end
+
+rescue OptionParser::ParseError
+  $stderr.puts("Could not process command line arguments. "+
+               "#{$!} #{ARGV.join(' ')}")
+  exit 1
+end
+
+go
