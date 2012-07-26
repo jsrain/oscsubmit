@@ -5,6 +5,10 @@ require 'ostruct'
 require 'yaml'
 require 'tmpdir'
 
+#global variables:
+# $logfile
+# osccmd
+
 def log(message)
   unless $logfile
     return
@@ -23,7 +27,7 @@ def create_sr(package,from,to)
   log "Creating submit request for package #{package} from #{from} to #{to}"
   if system("#{$osccmd} sr #{from} #{package} #{to}")
     request = `#{$osccmd} request list #{to} #{package} |grep State:new |head -n 1 |cut -d\\  -f2`
-    log "Creted request id #{request}"
+    log "Created request id #{request}"
   end
 end
  
@@ -35,6 +39,9 @@ def ask(question)
     out = STDIN.getc.chr.downcase
   ensure
     system "stty -raw echo"
+  end
+  if out == 'c'
+    exit
   end
   out == 'y'
 end
@@ -118,7 +125,7 @@ def submit_project(project, options)
           changed = file_diff(package, project, target_project, file) || changed;
         end
         if (changed)
-          ask_submit(package, project, target_project, "=== Submit package #{package} to #{target_project}? (y/n)")
+          ask_submit(package, project, target_project, "=== Submit package #{package} to #{target_project}? (y/n/c)")
         else
           puts "Package #{package} not changed, skipping..."
         end
@@ -126,14 +133,14 @@ def submit_project(project, options)
         unless changelog_diff(package, project, target_project)
           puts `#{$osccmd} rdiff #{target_project} #{package} #{project}`
         end
-        submitted = ask_submit(package, project, target_project, "=== Submit package #{package} to #{target_project}? (y/n)")
+        submitted = ask_submit(package, project, target_project, "=== Submit package #{package} to #{target_project}? (y/n/c)")
         unless submitted || target_project == projects[project][0][0]
           target_project = projects[project][0][0];
-          ask_submit(package, project, target_project, "=== Submit package #{package} to #{target_project}? (y/n)")
+          ask_submit(package, project, target_project, "=== Submit package #{package} to #{target_project}? (y/n/c)")
         end
       end
     else
-      ask_submit(package, project, target_project, "=== Pakcage #{package} is new. Submit to #{target_project}? (y/n)")
+      ask_submit(package, project, target_project, "=== Pakcage #{package} is new. Submit to #{target_project}? (y/n/c)")
     end
   end
 end
