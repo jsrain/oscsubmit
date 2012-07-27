@@ -1,0 +1,27 @@
+Configuration file describes where to submit the packages:
+
+Example:
+
+Devel:MyProject
+  -
+    -
+      openSUSE:Factory:MyProject:Staging
+    -
+      openSUSE:Factory:MyProject
+  -
+      openSUSE:Factory:Staging
+    -
+      openSUSE:Factory
+
+resulting in following behavior:
+
+- if package is found in openSUSE:Factory:MyProject:Staging or
+  openSUSE:Factory:MyProject, will be submitted to
+  openSUSE:Factory:MyProject:Staging
+- otherwise if package is found in openSUSE:Factory:Staging or
+  openSUSE:Factory, will be submitted to openSUSE:Factory:Staging
+- if package is not found at all, will be submitted to
+  openSUSE:Factory:MyProject:Staging
+
+For mutliple projects, insert multiple entries into the configuration
+file or use separate configuration files
