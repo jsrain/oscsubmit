@@ -44,8 +44,12 @@ def ask(question)
   end
   if out == 'c'
     exit
+  elsif out == 'y'
+    return true
+  elsif out == 'n'
+    return false
   end
-  out == 'y'
+  return ask(question)
 end
 
 #ask whether to submit a package or not, submit if requested
@@ -76,7 +80,7 @@ def file_diff(package, from, to, file)
 end
 
 def changelog_diff(package, from, to)
-  if file_diff(package, from, to, "#{package}.changes")
+  unless file_diff(package, from, to, "#{package}.changes")
     puts "=== Changelog has not changed..."
     return false
   end
@@ -139,6 +143,7 @@ def submit_project(project, options)
           changed = true
         else
           diff = `#{$osccmd} rdiff #{target_project} #{package} #{project}`
+          puts diff
           changed = diff != ""
         end
         if changed
