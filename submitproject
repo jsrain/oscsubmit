@@ -88,14 +88,9 @@ def changelog_diff(package, from, to)
 end
 
 def find_package_in_prjlist(package, prjlist)
-  found=nil
-  prjlist.each do |project|
-    if system "#{$osccmd} ls #{project} #{package} >/dev/null 2>/dev/null"
-      found=project;
-      break
-    end
+  prjlist.detect do |project|
+    system $osccmd, "ls", project, package, :out => close, :err => close
   end
-  found;
 end
 
 def find_package(package,projects)
@@ -120,7 +115,7 @@ def submit_project(project, options)
   pkglist = `#{$osccmd} ls #{project} |grep -v _product:`
   pkglist.split.each do |package|
     puts "=== Analyzing package #{package}..."
-    (target_project, project_found) = find_package(package,projects[project])
+    target_project, project_found = find_package(package,projects[project])
     if target_project == nil
       target_project = projects[project][0][0];
     end
