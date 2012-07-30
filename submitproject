@@ -4,32 +4,44 @@ require 'optparse'
 require 'ostruct'
 require 'yaml'
 require 'tmpdir'
+require 'singleton'
+require 'logger'
 
-#global variables:
-# $logfile
-# $osccmd
-# $debug_project
+class Options
+  include Singleton
 
-def log(message)
-  unless $logfile
-    return
+  def initialize
+    @logger = EmptyLogger.new
   end
-  open($logfile, 'a') { |f|
-    f.puts message
-  }
+
+  attr_accessor :logger, :debug_project, :osc_cmd
+end
+
+class EmptyLogger
+  [:debug, :info, :warning, :error ].each do |f|
+    define_method(f) {}
+  end
+end
+
+def osc_cmd
+  Options.instance.osc_cmd
+end
+
+def log
+  Options.instance.logger
 end
 
 # create a submit request
 def create_sr(package,from,to)
   puts "Creating submit request for package #{package} from #{from} to #{to}"
-  if $debug_project
-    to = $debug_project
+  if Options.instance.debug_project
+    to = Options.instance.debug_project
     puts "Creating submit request for package #{package} from #{from} to #{to}"
   end
-  log "Creating submit request for package #{package} from #{from} to #{to}"
-  if system("#{$osccmd} sr #{from} #{package} #{to}")
-    request = `#{$osccmd} request list #{to} #{package} |grep State:new |head -n 1 |cut -d\\  -f2`
-    log "Created request id #{request}"
+  log.info "Creating submit request for package #{package} from #{from} to #{to}"
+  if system("#{osc_cmd} sr #{from} #{package} #{to}")
+    request = `#{osc_cmd} request list #{to} #{package} |grep State:new |head -n 1 |cut -d\\  -f2`
+    log.info "Created request id #{request}"
   end
 end
  
@@ -42,33 +54,30 @@ def ask(question)
   ensure
     system "stty -raw echo"
   end
-  if out == 'c'
-    exit
-  elsif out == 'y'
-    return true
-  elsif out == 'n'
-    return false
+  return case out
+    when 'c' then exit
+    when 'y' then true
+    when 'n' then false
+    else ask(question)
   end
-  return ask(question)
 end
 
 #ask whether to submit a package or not, submit if requested
 def ask_submit(package, from, to, question)
-  ret = false;
   if ask question
     create_sr(package, from, to)
-    ret = true
+    return true
   else
     puts "Skipping package #{package}"
+    return false
   end
-  ret
 end
 
 # print diff of a specific file; return true if files differ
 def file_diff(package, from, to, file)
-  ret = true;
+  ret = true
   Dir.mktmpdir {|tmpdir| 
-    files_found = system("cd #{tmpdir} && #{$osccmd} co #{from} #{package} #{file} && mv #{file} #{file}.new && #{$osccmd} co #{to} #{package} #{file} >/dev/null 2>&1")
+    files_found = system("cd #{tmpdir} && #{osc_cmd} co #{from} #{package} #{file} && mv #{file} #{file}.new && #{osc_cmd} co #{to} #{package} #{file} >/dev/null 2>&1")
     unless files_found
       puts "=== Cannot check out file #{file} from package #{package}"
       ret = true
@@ -89,43 +98,41 @@ end
 
 def find_package_in_prjlist(package, prjlist)
   prjlist.detect do |project|
-    system $osccmd, "ls", project, package, :out => close, :err => close
+    # works only in ruby 1.9 system osc_cmd, "ls", project, package, :out => :close, :err => :close
+    system "#{osc_cmd} ls #{project} #{package} 2>/dev/null 1>/dev/null"
   end
 end
 
 def find_package(package,projects)
-  found=nil
-  projects.each do |prjlist|
-    project_found = find_package_in_prjlist(package, prjlist)
-    if project_found != nil
-      found=[prjlist[0], project_found]
-      break
-    end
+  project = projects.detect do |prjlist|
+    find_package_in_prjlist(package, prjlist)
   end
-  found;
+  if project
+    return project.first, find_package_in_prjlist(package, project)
+  end
+  return nil
 end
 
 def submit_project(project, options)
-  $logfile = options.logfile
-  $debug_project = options.debug_project
-  $osccmd = options.api_url ? "osc -A #{options.api_url} " : "osc "
+  Options.instance.logger = Logger.new options.logfile if options.logfile
+  Options.instance.debug_project = options.debug_project
+  Options.instance.osc_cmd = options.api_url ? "osc -A #{options.api_url} " : "osc "
   prjconf = options.prjconf ? options.prjconf : "~/.oscsubmit"
   projects = YAML.load_file(File.expand_path(prjconf, __FILE__))
   # filter out generated packages
-  pkglist = `#{$osccmd} ls #{project} |grep -v _product:`
+  pkglist = `#{osc_cmd} ls #{project} |grep -v _product:`
   pkglist.split.each do |package|
     puts "=== Analyzing package #{package}..."
     target_project, project_found = find_package(package,projects[project])
     if target_project == nil
-      target_project = projects[project][0][0];
+      target_project = projects[project].first.first;
     end
-    package_found = project_found != nil
-    if package_found
+    if project_found
       puts "=== Package #{package} found in project #{target_project}"
       if (package == "_product")
-	changed = false;
-        `#{$osccmd} ls #{project} #{package} |grep '\\(product\\|group\\|spec\\)$'`.split.each do |file|
-          changed = file_diff(package, project, target_project, file) || changed;
+        changed = false;
+        `#{osc_cmd} ls #{project} #{package} |grep '\\(product\\|group\\|spec\\)$'`.split.each do |file|
+          changed ||= file_diff(package, project, target_project, file)
         end
         if (changed)
           ask_submit(package, project, target_project, "=== Submit package #{package} to #{target_project}? (y/n/c)")
@@ -137,7 +144,7 @@ def submit_project(project, options)
         if changelog_diff(package, project, target_project)
           changed = true
         else
-          diff = `#{$osccmd} rdiff #{target_project} #{package} #{project}`
+          diff = `#{osc_cmd} rdiff #{target_project} #{package} #{project}`
           puts diff
           changed = diff != ""
         end
@@ -152,7 +159,7 @@ def submit_project(project, options)
         end
       end
     else
-      ask_submit(package, project, target_project, "=== Pakcage #{package} is new. Submit to #{target_project}? (y/n/c)")
+      ask_submit(package, project, target_project, "=== Package #{package} is new. Submit to #{target_project}? (y/n/c)")
     end
   end
 end
