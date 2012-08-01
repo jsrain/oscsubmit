@@ -126,7 +126,7 @@ def submit_project(project, options)
     end
     package_found = project_found != nil
     if package_found
-      puts "=== Package #{package} found in project #{target_project}"
+      puts "=== Package #{package} found in project #{project_found}"
       if (package == "_product")
 	changed = false;
         `#{$osccmd} ls #{project} #{package} |grep '\\(product\\|group\\|spec\\)$'`.split.each do |file|
