@@ -130,7 +130,7 @@ def submit_project(project, options)
       if (package == "_product")
 	changed = false;
         `#{$osccmd} ls #{project} #{package} |grep '\\(product\\|group\\|spec\\)$'`.split.each do |file|
-          changed = file_diff(package, project, target_project, file) || changed;
+          changed = file_diff(package, project, project_found, file) || changed;
         end
         if (changed)
           ask_submit(package, project, target_project, "=== Submit package #{package} to #{target_project}? (y/n/c)")
@@ -139,10 +139,10 @@ def submit_project(project, options)
         end
       else
         changed = false
-        if changelog_diff(package, project, target_project)
+        if changelog_diff(package, project, project_found)
           changed = true
         else
-          diff = `#{$osccmd} rdiff #{target_project} #{package} #{project}`
+          diff = `#{$osccmd} rdiff #{project_found} #{package} #{project}`
           puts diff
           changed = diff != ""
         end
