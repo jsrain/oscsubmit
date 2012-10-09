@@ -28,7 +28,7 @@ def create_sr(package,from,to)
   end
   log "Creating submit request for package #{package} from #{from} to #{to}"
   if system("#{$osccmd} sr #{from} #{package} #{to}")
-    request = `#{$osccmd} request list #{to} #{package} |grep State:new |head -n 1 |cut -d\\  -f2`
+    request = `#{$osccmd} request list #{to} #{package} |grep "State:\\(new\\|review\\)" |head -n 1 |cut -d\\  -f2`
     log "Created request id #{request}"
   end
 end
